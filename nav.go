@@ -4,17 +4,18 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"image"
 	"io"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/nfnt/resize"
+	ueberzug "gitlab.com/diamondburned/ueberzug-go"
 	times "gopkg.in/djherbis/times.v1"
 )
 
@@ -460,7 +461,6 @@ func (nav *nav) position() {
 }
 
 func (nav *nav) previewLoop(ui *ui) {
-	var prev string
 	for path := range nav.previewChan {
 		clear := len(path) == 0
 	loop:
@@ -472,18 +472,63 @@ func (nav *nav) previewLoop(ui *ui) {
 				break loop
 			}
 		}
-		if clear && len(gOpts.previewer) != 0 && len(gOpts.cleaner) != 0 && nav.volatilePreview {
-			cmd := exec.Command(gOpts.cleaner, prev)
-			if err := cmd.Run(); err != nil {
-				log.Printf("cleaning preview: %s", err)
-			}
+		if clear && nav.volatilePreview {
+			preview.clear()
 			nav.volatilePreview = false
 		}
 		if len(path) != 0 {
 			win := ui.wins[len(ui.wins)-1]
 			nav.preview(path, win)
-			prev = path
 		}
+	}
+}
+
+type imagePreview struct {
+	image *ueberzug.Image
+}
+
+var preview = &imagePreview{}
+
+func (i *imagePreview) show(path string, win *win) (err error) {
+	i.clear()
+
+    var image image.Image
+	if image, err = getImage(path, win.w*8, win.h*16); err == nil {
+		i.image, err = ueberzug.NewImage(image, win.x*7, win.y*16)
+	}
+    return
+}
+
+func getImage(url string, w, h int) (image.Image, error) {
+	var reader io.Reader
+
+	f, err := os.Open(url)
+	if err != nil {
+		return nil, err
+	}
+
+	defer f.Close()
+
+	reader = f
+
+	img, _, err := image.Decode(reader)
+	if err != nil {
+		return nil, err
+	}
+
+	img = resize.Thumbnail(
+		uint(w), uint(h),
+		img,
+		resize.Bilinear,
+	)
+
+	return img, nil
+}
+
+func (i *imagePreview) clear() {
+	if i.image != nil {
+		i.image.Clear()
+		i.image.Destroy()
 	}
 }
 
@@ -493,40 +538,10 @@ func (nav *nav) preview(path string, win *win) {
 
 	var reader io.Reader
 
-	if len(gOpts.previewer) != 0 {
-		exportOpts()
-		cmd := exec.Command(gOpts.previewer, path,
-			strconv.Itoa(win.w),
-			strconv.Itoa(win.h),
-			strconv.Itoa(win.x),
-			strconv.Itoa(win.y))
-
-		out, err := cmd.StdoutPipe()
-		if err != nil {
-			log.Printf("previewing file: %s", err)
-			return
-		}
-
-		if err := cmd.Start(); err != nil {
-			log.Printf("previewing file: %s", err)
-			out.Close()
-			return
-		}
-
-		defer func() {
-			if err := cmd.Wait(); err != nil {
-				if e, ok := err.(*exec.ExitError); ok {
-					if e.ExitCode() != 0 {
-						reg.volatile = true
-						nav.volatilePreview = true
-					}
-				} else {
-					log.Printf("loading file: %s", err)
-				}
-			}
-		}()
-		defer out.Close()
-		reader = out
+    if err := preview.show(path, win); err == nil {
+        reg.volatile = true
+        nav.volatilePreview = true
+		return
 	} else {
 		f, err := os.Open(path)
 		if err != nil {
