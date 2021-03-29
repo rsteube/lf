@@ -493,7 +493,7 @@ func (i *imagePreview) show(path string, win *win) (err error) {
 	i.clear()
 
     var image image.Image
-	if image, err = getImage(path, win.w*8, win.h*16); err == nil {
+	if image, err = getImage(path, win.w*7, win.h*16); err == nil {
 		i.image, err = ueberzug.NewImage(image, win.x*7, win.y*16)
 	}
     return
